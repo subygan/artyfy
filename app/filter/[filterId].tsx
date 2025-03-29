@@ -1,6 +1,6 @@
 // app/filter/[filterId].tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Image, Alert, TextInput } from 'react-native';
+import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Image, Alert, TextInput, ScrollView } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '@/constants/Colors';
@@ -8,7 +8,7 @@ import { IconSymbol } from '@/components/ui/IconSymbol';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { FilterApi, FilterResponse, ImageApi, CreateFilterRequest } from '@/api'; // Import the new API services
+import { FilterApi, FilterResponse, ImageApi, CreateFilterRequest, ProcessedImageResponse, ProcessingApi } from '@/api'; // Import ProcessingApi
 
 // Define types matching our backend API
 export interface PhotoItem {
@@ -30,11 +30,14 @@ export default function FilterScreen() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
+    const [processedImages, setProcessedImages] = useState<ProcessedImageResponse[]>([]);
     const [isNewFilter, setIsNewFilter] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [isProcessing, setIsProcessing] = useState(false);
     const [filterName, setFilterName] = useState('');
     const [filterDescription, setFilterDescription] = useState('');
     const [filterType, setFilterType] = useState('custom');
+    const [selectedPhotos, setSelectedPhotos] = useState<Set<string>>(new Set());
 
     // Fetch filter data when component mounts or filterId changes
     useEffect(() => {
@@ -70,6 +73,7 @@ export default function FilterScreen() {
                     setFilterType(newFilter.settings.type);
                     setIsNewFilter(true);
                     setPhotos([]);
+                    setProcessedImages([]);
                     setError(null);
                     setIsLoading(false);
                     return;
@@ -89,6 +93,15 @@ export default function FilterScreen() {
                         id: 'example-1',
                         uri: filterData.example_image_url
                     }]);
+                }
+                
+                // Fetch processed images for this filter
+                try {
+                    const processedImagesData = await FilterApi.getProcessedImagesByFilter(filterId);
+                    setProcessedImages(processedImagesData);
+                } catch (processedErr: any) {
+                    console.error('Error fetching processed images:', processedErr);
+                    // Don't set main error since the filter loaded successfully
                 }
                 
                 setError(null);
@@ -112,49 +125,117 @@ export default function FilterScreen() {
             return;
         }
 
-        // Launch the image picker
+        // Launch the image picker with MULTIPLE selection enabled
         const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            allowsEditing: true,
+            allowsMultipleSelection: true, // Enable multiple selection
+            selectionLimit: 10, // Optional: limit number of selections
             quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            const selectedImage = result.assets[0];
-            
             if (isNewFilter) {
                 // For new filters, just add the image to the local state
                 // It will be uploaded when the filter is saved
-                setPhotos(prevPhotos => [
-                    ...prevPhotos,
-                    {
-                        id: `temp-${Date.now()}`,
-                        uri: selectedImage.uri
-                    }
-                ]);
+                const newPhotos = result.assets.map(asset => ({
+                    id: `temp-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+                    uri: asset.uri
+                }));
+                
+                setPhotos(prevPhotos => [...prevPhotos, ...newPhotos]);
                 return;
             }
             
+            setIsProcessing(true);
+            
             try {
-                // Upload the image URL to create a record in the database
-                const imageRecord = await ImageApi.uploadImage({
-                    original_url: selectedImage.uri
+                // Upload multiple images in parallel
+                const uploadPromises = result.assets.map(asset => 
+                    ImageApi.uploadImage({ original_url: asset.uri })
+                );
+                
+                // Wait for all uploads to complete
+                const uploadedImages = await Promise.all(uploadPromises);
+                
+                // Add all new images to the photos list
+                const newPhotos = uploadedImages.map(img => ({
+                    id: img.id,
+                    uri: img.original_url
+                }));
+                
+                setPhotos(prevPhotos => [...prevPhotos, ...newPhotos]);
+                
+                // Auto-select the newly uploaded images
+                setSelectedPhotos(prev => {
+                    const updated = new Set(prev);
+                    newPhotos.forEach(photo => updated.add(photo.id));
+                    return updated;
                 });
                 
-                // Add the new image to the photos list
-                setPhotos(prevPhotos => [
-                    ...prevPhotos,
-                    {
-                        id: imageRecord.id,
-                        uri: imageRecord.original_url
-                    }
-                ]);
-                
-                Alert.alert("Image Uploaded", "Your image has been uploaded successfully!");
+                Alert.alert(
+                    "Images Uploaded", 
+                    `${uploadedImages.length} image${uploadedImages.length !== 1 ? 's' : ''} uploaded successfully. They are now selected for processing.`
+                );
             } catch (err: any) {
-                console.error('Error uploading image:', err);
-                Alert.alert("Upload Failed", err.message || "Failed to upload image");
+                console.error('Error uploading images:', err);
+                Alert.alert("Upload Failed", err.message || "Failed to upload images");
+            } finally {
+                setIsProcessing(false);
             }
+        }
+    };
+
+    const togglePhotoSelection = (photoId: string) => {
+        setSelectedPhotos(prev => {
+            const updated = new Set(prev);
+            if (updated.has(photoId)) {
+                updated.delete(photoId);
+            } else {
+                updated.add(photoId);
+            }
+            return updated;
+        });
+    };
+
+    const handleProcessImages = async () => {
+        if (!filter || !filterId || typeof filterId !== 'string') {
+            Alert.alert("Error", "Invalid filter selected");
+            return;
+        }
+
+        // Get selected image IDs, excluding examples
+        const imageIds = Array.from(selectedPhotos)
+            .filter(id => !id.startsWith('example-') && !id.startsWith('temp-'));
+            
+        if (imageIds.length === 0) {
+            // Check if there are any valid images at all first
+            const validImages = photos.filter(p => !p.id.startsWith('example-') && !p.id.startsWith('temp-'));
+            
+            if (validImages.length === 0) {
+                Alert.alert("No Images", "Please upload at least one image before processing");
+            } else {
+                Alert.alert("No Images Selected", "Please select at least one image to process");
+            }
+            return;
+        }
+        
+        try {
+            setIsProcessing(true);
+            
+            // Call the processing API
+            const jobResponse = await ProcessingApi.processImages({
+                filter_id: filterId,
+                image_ids: imageIds
+            });
+            
+            // Navigate to the processing/job screen with the job ID
+            router.push(`/processing/${jobResponse.job_id}`);
+            
+        } catch (err: any) {
+            console.error('Error starting processing job:', err);
+            Alert.alert("Processing Error", err.message || "Failed to start image processing");
+        } finally {
+            setIsProcessing(false);
         }
     };
 
@@ -166,6 +247,7 @@ export default function FilterScreen() {
 
         try {
             setIsSaving(true);
+            console.log("Starting filter creation with name:", filterName);
             
             // Prepare the filter data
             const filterData: CreateFilterRequest = {
@@ -178,8 +260,11 @@ export default function FilterScreen() {
                 is_public: false
             };
             
+            console.log("Filter data prepared:", JSON.stringify(filterData));
+            
             // If we have an example image, include it
             if (photos.length > 0) {
+                console.log("Including example image from photos");
                 // We need to convert the URI to a file object
                 // This is a simplified approach - in a real app you might need to
                 // fetch the actual file data and create a proper File object
@@ -197,10 +282,14 @@ export default function FilterScreen() {
                     name: `example_image.${fileType}`,
                     type: `image/${fileType}`
                 } as any;
+                
+                console.log("Added example image:", exampleImageUri);
             }
             
+            console.log("Calling createFilter API method...");
             // Create the filter
             const newFilter = await FilterApi.createFilter(filterData);
+            console.log("Filter created successfully:", newFilter);
             
             // Navigate to the newly created filter
             Alert.alert(
@@ -215,24 +304,82 @@ export default function FilterScreen() {
             );
         } catch (err: any) {
             console.error('Error creating filter:', err);
-            Alert.alert("Error", err.message || "Failed to create filter");
+            let errorMessage = err.message || "Failed to create filter";
+            
+            // Enhanced error reporting for network errors
+            if (err.name === 'TypeError' && err.message.includes('Network request failed')) {
+                errorMessage = "Network error. Please check your internet connection.";
+            }
+            
+            // Log request details for debugging
+            console.error('Filter data that failed:', JSON.stringify({
+                name: filterName,
+                description: filterDescription,
+                type: filterType,
+                photoCount: photos.length
+            }));
+            
+            Alert.alert(
+                "Error Creating Filter", 
+                errorMessage,
+                [
+                    {
+                        text: "Try Again",
+                        onPress: handleSaveFilter
+                    },
+                    {
+                        text: "OK",
+                        style: "cancel"
+                    }
+                ]
+            );
         } finally {
             setIsSaving(false);
         }
     };
 
     const renderPhotoItem = ({ item }: { item: GridItem }) => {
+        const isSelected = selectedPhotos.has(item.id);
+        
         if (item.isUpload) {
             return (
-                <Pressable style={[styles.photoTile, styles.uploadTile]} onPress={handleUploadPress}>
+                <Pressable 
+                    style={[styles.photoTile, styles.uploadTile]} 
+                    onPress={handleUploadPress}
+                    disabled={isProcessing || isSaving}
+                >
                     <IconSymbol name="plus.circle.fill" size={40} color={Colors[colorScheme ?? 'light'].text} />
-                    <ThemedText>Add Photo</ThemedText>
+                    <ThemedText>Add Photo{isNewFilter ? '' : 's'}</ThemedText>
                 </Pressable>
             );
         }
+        
+        // Don't allow selecting example images or temporary images for processing
+        const canSelect = !isNewFilter && !item.id.startsWith('example-') && !item.id.startsWith('temp-');
+        
         return (
-            <View style={styles.photoTile}>
+            <Pressable 
+                style={[
+                    styles.photoTile, 
+                    isSelected && styles.selectedPhotoTile
+                ]} 
+                onPress={() => canSelect && togglePhotoSelection(item.id)}
+                disabled={!canSelect || isProcessing}
+            >
                 <Image source={{ uri: item.uri }} style={styles.photoImage} />
+                {isSelected && (
+                    <View style={styles.selectionOverlay}>
+                        <IconSymbol name="checkmark.circle.fill" size={30} color="#FFFFFF" />
+                    </View>
+                )}
+            </Pressable>
+        );
+    };
+
+    const renderProcessedImageItem = ({ item }: { item: ProcessedImageResponse }) => {
+        return (
+            <View style={styles.processedTile}>
+                <Image source={{ uri: item.processed_url }} style={styles.processedImage} />
             </View>
         );
     };
@@ -260,132 +407,124 @@ export default function FilterScreen() {
                 }}
             />
 
-            <View style={styles.header}>
-                {isNewFilter ? (
-                    <>
-                        <TextInput
-                            style={[styles.textInput, styles.title]}
-                            value={filterName}
-                            onChangeText={setFilterName}
-                            placeholder="Enter filter name"
-                            placeholderTextColor="#999"
+            <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.header}>
+                    {isNewFilter ? (
+                        <>
+                            <TextInput
+                                style={[styles.textInput, styles.title]}
+                                value={filterName}
+                                onChangeText={setFilterName}
+                                placeholder="Enter filter name"
+                                placeholderTextColor="#999"
+                                autoFocus={true}
+                            />
+                            <TextInput
+                                style={[styles.textInput, styles.description]}
+                                value={filterDescription}
+                                onChangeText={setFilterDescription}
+                                placeholder="Enter filter description"
+                                placeholderTextColor="#999"
+                                multiline
+                            />
+                        </>
+                    ) : (
+                        <>
+                            <ThemedText style={styles.title}>{filter?.name || 'Unnamed Filter'}</ThemedText>
+                            <ThemedText style={styles.description}>{filter?.description || 'No description available'}</ThemedText>
+                        </>
+                    )}
+                </View>
+
+                <View style={styles.section}>
+                    <ThemedText style={styles.sectionTitle}>Filter Type</ThemedText>
+                    {isNewFilter ? (
+                        <Pressable 
+                            style={styles.typeSelector}
+                            onPress={() => {
+                                // In a real app, you might show a picker here
+                                // For simplicity, we'll just toggle between a few types
+                                setFilterType(filterType === 'custom' ? 'artistic' : 'custom');
+                            }}
+                        >
+                            <ThemedText>{filterType}</ThemedText>
+                            <IconSymbol name="chevron.down" size={16} color={Colors[colorScheme ?? 'light'].text} />
+                        </Pressable>
+                    ) : (
+                        <ThemedText>{filter?.settings?.type || 'Unknown'}</ThemedText>
+                    )}
+                </View>
+
+                <View style={styles.section}>
+                    <ThemedText style={styles.sectionTitle}>{isNewFilter ? 'Example Photo' : 'Your Photos'}</ThemedText>
+                    <FlatList
+                        data={itemsWithUpload}
+                        renderItem={renderPhotoItem}
+                        keyExtractor={item => item.id}
+                        horizontal={true}
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.photosList}
+                    />
+                </View>
+
+                {!isNewFilter && processedImages.length > 0 && (
+                    <View style={styles.section}>
+                        <ThemedText style={styles.sectionTitle}>Processed Images</ThemedText>
+                        <ThemedText style={styles.subtitle}>Images that have been processed with this filter</ThemedText>
+                        <FlatList
+                            data={processedImages}
+                            renderItem={renderProcessedImageItem}
+                            keyExtractor={item => item.id}
+                            numColumns={2}
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.processedImagesGrid}
+                            columnWrapperStyle={styles.columnWrapper}
                         />
-                        <TextInput
-                            style={[styles.textInput, styles.description]}
-                            value={filterDescription}
-                            onChangeText={setFilterDescription}
-                            placeholder="Enter filter description"
-                            placeholderTextColor="#999"
-                            multiline
-                        />
-                    </>
-                ) : (
-                    <>
-                        <ThemedText style={styles.title}>{filter?.name || 'Unnamed Filter'}</ThemedText>
-                        <ThemedText style={styles.description}>{filter?.description || 'No description available'}</ThemedText>
-                    </>
+                    </View>
                 )}
-            </View>
 
-            <View style={styles.section}>
-                <ThemedText style={styles.sectionTitle}>Filter Type</ThemedText>
-                {isNewFilter ? (
-                    <Pressable 
-                        style={styles.typeSelector}
-                        onPress={() => {
-                            // In a real app, you might show a picker here
-                            // For simplicity, we'll just toggle between a few types
-                            setFilterType(filterType === 'custom' ? 'artistic' : 'custom');
-                        }}
-                    >
-                        <ThemedText>{filterType}</ThemedText>
-                        <IconSymbol name="chevron.down" size={16} color={Colors[colorScheme ?? 'light'].text} />
-                    </Pressable>
-                ) : (
-                    <ThemedText>{filter?.settings?.type || 'Unknown'}</ThemedText>
-                )}
-            </View>
-
-            <View style={styles.section}>
-                <ThemedText style={styles.sectionTitle}>{isNewFilter ? 'Example Photo' : 'Your Photos'}</ThemedText>
-                <FlatList
-                    data={itemsWithUpload}
-                    renderItem={renderPhotoItem}
-                    keyExtractor={item => item.id}
-                    horizontal={true}
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.photosList}
-                />
-            </View>
-
-            <View style={styles.actions}>
-                {isNewFilter ? (
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.button,
-                            {
-                                backgroundColor: Colors[colorScheme ?? 'light'].tint,
-                                opacity: pressed || isSaving ? 0.8 : 1
-                            }
-                        ]}
-                        onPress={handleSaveFilter}
-                        disabled={isSaving}
-                    >
-                        {isSaving ? (
-                            <ActivityIndicator color="white" size="small" />
-                        ) : (
-                            <ThemedText style={styles.buttonText}>Save Filter</ThemedText>
-                        )}
-                    </Pressable>
-                ) : (
-                    <Pressable
-                        style={({ pressed }) => [
-                            styles.button,
-                            {
-                                backgroundColor: Colors[colorScheme ?? 'light'].tint,
-                                opacity: pressed ? 0.8 : 1
-                            }
-                        ]}
-                        onPress={() => {
-                            // Process images with selected filter
-                            if (filter && photos.length > 0) {
-                                Alert.alert(
-                                    "Process Images", 
-                                    "Do you want to process your images with this filter?",
-                                    [
-                                        { text: "Cancel", style: "cancel" },
-                                        { 
-                                            text: "Process", 
-                                            onPress: async () => {
-                                                try {
-                                                    // Extract image IDs (excluding the example images that might not have real IDs)
-                                                    const imageIds = photos
-                                                        .filter(photo => !photo.id.startsWith('example-'))
-                                                        .map(photo => photo.id);
-                                                    
-                                                    if (imageIds.length === 0) {
-                                                        Alert.alert("No Images", "Please upload at least one image to process");
-                                                        return;
-                                                    }
-                                                    
-                                                    // Navigate to a processing screen or show progress here
-                                                    Alert.alert("Processing Started", "Your images are being processed. You'll be notified when they're ready.");
-                                                } catch (err: any) {
-                                                    Alert.alert("Error", err.message || "Failed to start processing");
-                                                }
-                                            }
-                                        }
-                                    ]
-                                );
-                            } else {
-                                Alert.alert("No Images", "Please upload at least one image to process");
-                            }
-                        }}
-                    >
-                        <ThemedText style={styles.buttonText}>Process Images</ThemedText>
-                    </Pressable>
-                )}
-            </View>
+                <View style={styles.actions}>
+                    {isNewFilter ? (
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.button,
+                                {
+                                    backgroundColor: Colors[colorScheme ?? 'light'].tint,
+                                    opacity: pressed || isSaving ? 0.8 : 1
+                                }
+                            ]}
+                            onPress={handleSaveFilter}
+                            disabled={isSaving}
+                        >
+                            {isSaving ? (
+                                <ActivityIndicator color="white" size="small" />
+                            ) : (
+                                <ThemedText style={styles.buttonText}>Save Filter</ThemedText>
+                            )}
+                        </Pressable>
+                    ) : (
+                        <Pressable
+                            style={({ pressed }) => [
+                                styles.button,
+                                {
+                                    backgroundColor: Colors[colorScheme ?? 'light'].tint,
+                                    opacity: (pressed || isProcessing || selectedPhotos.size === 0) ? 0.8 : 1
+                                }
+                            ]}
+                            onPress={handleProcessImages}
+                            disabled={isProcessing || selectedPhotos.size === 0}
+                        >
+                            {isProcessing ? (
+                                <ActivityIndicator color="white" size="small" />
+                            ) : (
+                                <ThemedText style={styles.buttonText}>
+                                    Process {selectedPhotos.size > 0 ? `${selectedPhotos.size} ` : ''}Images
+                                </ThemedText>
+                            )}
+                        </Pressable>
+                    )}
+                </View>
+            </ScrollView>
         </ThemedView>
     );
 }
@@ -400,9 +539,8 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     header: {
-        padding: 20,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: '#ccc',
+        padding: 16,
+        marginBottom: 16,
     },
     title: {
         fontSize: 24,
@@ -414,62 +552,87 @@ const styles = StyleSheet.create({
         opacity: 0.8,
     },
     section: {
-        padding: 20,
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: '#ccc',
+        padding: 16,
+        marginBottom: 16,
     },
     sectionTitle: {
         fontSize: 18,
         fontWeight: 'bold',
+        marginBottom: 8,
+    },
+    subtitle: {
+        fontSize: 14,
+        opacity: 0.7,
         marginBottom: 12,
     },
     photosList: {
-        paddingVertical: 10,
+        paddingVertical: 8,
     },
     photoTile: {
-        width: 120,
-        height: 120,
-        borderRadius: 8,
+        width: 150,
+        height: 150,
         marginRight: 12,
+        borderRadius: 8,
         overflow: 'hidden',
+        position: 'relative', // For the selection overlay
+    },
+    selectedPhotoTile: {
+        borderWidth: 3,
+        borderColor: Colors.light.tint,
+    },
+    selectionOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.3)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    uploadTile: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderStyle: 'dashed',
     },
     photoImage: {
         width: '100%',
         height: '100%',
     },
-    uploadTile: {
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 2,
-        borderStyle: 'dashed',
-        borderColor: '#ccc',
-        backgroundColor: 'rgba(200, 200, 200, 0.2)',
+    processedImagesGrid: {
+        paddingVertical: 8,
     },
-    actions: {
-        padding: 20,
-        flexDirection: 'row',
-        justifyContent: 'center',
+    columnWrapper: {
+        justifyContent: 'space-between',
+        marginBottom: 12,
     },
-    button: {
-        paddingVertical: 12,
-        paddingHorizontal: 24,
+    processedTile: {
+        width: '48%',
+        aspectRatio: 1,
         borderRadius: 8,
-        alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: 200,
+        overflow: 'hidden',
+        marginBottom: 8,
     },
-    buttonText: {
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: 16,
+    processedImage: {
+        width: '100%',
+        height: '100%',
     },
     textInput: {
-        padding: 8,
+        padding: 10,
         borderWidth: 1,
-        borderColor: '#ddd',
-        borderRadius: 4,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        marginBottom: 12,
         backgroundColor: '#fff',
-        marginBottom: 8,
+        color: '#000', // Ensuring text is visible regardless of theme
+        fontSize: 16,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.1,
+        shadowRadius: 2,
+        elevation: 1,
     },
     typeSelector: {
         flexDirection: 'row',
@@ -477,8 +640,22 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         padding: 8,
         borderWidth: 1,
-        borderColor: '#ddd',
+        borderColor: '#ccc',
         borderRadius: 4,
-        backgroundColor: '#fff',
+    },
+    actions: {
+        padding: 16,
+        marginBottom: 32,
+    },
+    button: {
+        padding: 16,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    buttonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
     },
 });

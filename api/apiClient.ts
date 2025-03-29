@@ -1,5 +1,8 @@
 import { getAuth } from 'firebase/auth';
 
+// Change the API base URL to your current backend endpoint
+// If using a local development server, use 'http://localhost:PORT'
+// If using ngrok, replace with your current ngrok URL
 const API_BASE_URL = 'https://dbc8-142-154-218-138.ngrok-free.app';
 
 /**
@@ -38,6 +41,8 @@ export class ApiClient {
     const url = `${API_BASE_URL}${endpoint}`;
     const headers: Record<string, string> = {};
     
+    console.log(`Making ${method} request to: ${url}`);
+    
     // Add authentication header if required
     if (requiresAuth) {
       const token = await this.getAuthToken();
@@ -62,23 +67,46 @@ export class ApiClient {
     if (data) {
       if (isFormData && data instanceof FormData) {
         options.body = data;
+        console.log('Sending FormData request');
       } else if (!isFormData) {
         options.body = JSON.stringify(data);
+        console.log('Request payload:', JSON.stringify(data, null, 2));
       }
     }
     
     // Make the request
     try {
+      console.log(`Sending request with options:`, JSON.stringify(options, (key, value) => {
+        // Don't log the entire body payload
+        if (key === 'body' && typeof value === 'string' && value.length > 100) {
+          return value.substring(0, 100) + '... [truncated]';
+        }
+        return value;
+      }, 2));
+      
       const response = await fetch(url, options);
+      console.log(`Received response with status: ${response.status}`);
       
       // Handle non-success responses
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ message: 'Unknown error' }));
-        throw new Error(errorData.message || `Request failed with status ${response.status}`);
+        let errorMessage: string;
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.message || `Request failed with status ${response.status}`;
+        } catch (e) {
+          // If we can't parse JSON, try to get text
+          const errorText = await response.text().catch(() => 'Unknown error');
+          errorMessage = `Request failed with status ${response.status}: ${errorText}`;
+        }
+        
+        console.error('API error response:', errorMessage);
+        throw new Error(errorMessage);
       }
       
       // Parse and return the response
-      return await response.json();
+      const responseData = await response.json();
+      console.log('Response data:', JSON.stringify(responseData).substring(0, 200) + (JSON.stringify(responseData).length > 200 ? '... [truncated]' : ''));
+      return responseData;
     } catch (error) {
       console.error(`API ${method} request to ${endpoint} failed:`, error);
       throw error;

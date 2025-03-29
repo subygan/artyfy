@@ -35,6 +35,15 @@ export interface UpdateFilterRequest {
   example_image_url?: string;
 }
 
+export interface ProcessedImageResponse {
+  id: string;
+  image_id: string;
+  filter_id: string;
+  processed_url: string;
+  original_url: string;
+  created_at: string;
+}
+
 /**
  * API service for filter-related endpoints
  */
@@ -101,5 +110,12 @@ export class FilterApi {
    */
   static async deleteFilter(filterId: string): Promise<{ message: string }> {
     return ApiClient.delete<{ message: string }>(`/api/filters/${filterId}`);
+  }
+
+  /**
+   * Get processed images for a specific filter
+   */
+  static async getProcessedImagesByFilter(filterId: string): Promise<ProcessedImageResponse[]> {
+    return ApiClient.get<ProcessedImageResponse[]>(`/api/filters/${filterId}/processed-images`);
   }
 }
