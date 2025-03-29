@@ -1,44 +1,72 @@
-import { Image, StyleSheet, Platform, FlatList, Pressable, useWindowDimensions, Alert, View } from 'react-native';
+import { Image, StyleSheet, Platform, FlatList, Pressable, useWindowDimensions, Alert, View, ActivityIndicator } from 'react-native';
 
 import { HelloWave } from '@/components/HelloWave';
 import ParallaxScrollView from '@/components/ParallaxScrollView';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { IconSymbol } from '@/components/ui/IconSymbol';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { Colors } from '@/constants/Colors';
+import { FilterApi, FilterResponse } from '@/api'; // Import API
 
-// Define FilterItem interface
-interface FilterItem {
+// Define FilterItem interface (can be removed or kept for Create New)
+interface DisplayFilterItem extends FilterResponse {
   id: string;
   name: string;
-  color?: string;
+  color?: string; // Keep color for display, maybe derive from settings?
   isCreate?: boolean;
 }
 
-// Sample filter data - in a real app, this might come from an API or database
-const FILTERS: FilterItem[] = [
-  { id: 'create', name: 'Create New', isCreate: true },
-  { id: '1', name: 'Vintage', color: '#E6BEAE' },
-  { id: '2', name: 'Noir', color: '#363636' },
-  { id: '3', name: 'Sepia', color: '#D4A76A' },
-  { id: '4', name: 'Pastel', color: '#C9E4CA' },
-  { id: '5', name: 'Dramatic', color: '#4A4E69' },
-  { id: '6', name: 'Vibrant', color: '#F46036' },
-  // Add more filters as needed
-];
+const CREATE_NEW_FILTER_ITEM: DisplayFilterItem = {
+  id: 'create',
+  user_id: '', // Not applicable
+  name: 'Create New',
+  description: '', // Not applicable
+  settings: { type: '', params: {} }, // Not applicable
+  is_default: false,
+  is_public: false,
+  example_image_url: '',
+  popularity: 0,
+  created_at: '', // Not applicable
+  updated_at: '', // Not applicable
+  isCreate: true,
+};
 
 export default function HomeScreen() {
   const router = useRouter();
   const colorScheme = useColorScheme();
   const { width } = useWindowDimensions();
+  const [filters, setFilters] = useState<DisplayFilterItem[]>([CREATE_NEW_FILTER_ITEM]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch filters on mount
+  useEffect(() => {
+    const fetchFilters = async () => {
+      try {
+        setIsLoading(true);
+        const fetchedFilters = await FilterApi.getAllFilters();
+        // Combine create new with fetched filters
+        setFilters([CREATE_NEW_FILTER_ITEM, ...fetchedFilters]);
+        setError(null);
+      } catch (err: any) {
+        console.error("Error fetching filters:", err);
+        setError(err.message || 'Failed to load filters.');
+        setFilters([CREATE_NEW_FILTER_ITEM]); // Show only create on error
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchFilters();
+  }, []);
 
   // Calculate item size for 2 columns with margins
   const itemSize = (width - 64) / 2; // 16px padding sides (32 total) + 8px margin sides per item (32 total) = 64
 
-  const navigateToFilter = (filter: FilterItem) => {
+  const navigateToFilter = (filter: DisplayFilterItem) => {
     if (filter.isCreate) {
       // Navigate to the filter screen with a special ID for creation
       router.push('/filter/new');
@@ -57,12 +85,16 @@ export default function HomeScreen() {
     }
   };
 
-  const renderFilterItem = ({ item }: { item: FilterItem }) => {
+  const renderFilterItem = ({ item }: { item: DisplayFilterItem }) => {
     const isDark = colorScheme === 'dark';
     const defaultBgColor = isDark ? Colors.dark.card : Colors.light.card;
     const createBgColor = isDark ? '#333' : '#e0e0e0';
     const createTextColor = isDark ? Colors.dark.text : Colors.light.text;
     const filterTextColor = item.name === 'Noir' ? '#FFFFFF' : '#000000'; // Example specific color handling
+
+    // Use item.example_image_url for background if available?
+    // Or derive a color from settings?
+    const backgroundColor = item.color || defaultBgColor;
 
     return (
       <Pressable
@@ -71,7 +103,7 @@ export default function HomeScreen() {
           {
             width: itemSize,
             height: itemSize,
-            backgroundColor: item.isCreate ? createBgColor : item.color || defaultBgColor,
+            backgroundColor: item.isCreate ? createBgColor : backgroundColor,
           }
         ]}
         onPress={() => navigateToFilter(item)}>
@@ -105,15 +137,24 @@ export default function HomeScreen() {
           <ThemedText type="subtitle">Choose or create a filter style</ThemedText>
         </ThemedView>
 
-        <FlatList
-          data={FILTERS}
-          renderItem={renderFilterItem}
-          keyExtractor={(item) => item.id}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
-          contentContainerStyle={styles.listContent}
-          showsVerticalScrollIndicator={false}
-        />
+        {isLoading ? (
+          <ActivityIndicator size="large" color={Colors[colorScheme ?? 'light'].tint} style={styles.loadingIndicator} />
+        ) : error ? (
+          <View style={styles.errorContainer}>
+            <ThemedText style={styles.errorText}>Error: {error}</ThemedText>
+            {/* Optionally add a retry button here */}
+          </View>
+        ) : (
+          <FlatList
+            data={filters}
+            renderItem={renderFilterItem}
+            keyExtractor={(item) => item.id}
+            numColumns={2}
+            columnWrapperStyle={styles.columnWrapper}
+            contentContainerStyle={styles.listContent}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
       </ThemedView>
   );
 }
@@ -157,6 +198,19 @@ const styles = StyleSheet.create({
   filterName: {
     fontSize: 18,
     fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  loadingIndicator: {
+    marginTop: 50,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  errorText: {
+    color: 'red',
     textAlign: 'center',
   },
 });
