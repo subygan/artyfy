@@ -6,11 +6,15 @@ import {
   onAuthStateChanged,
   signInWithCredential,
   GoogleAuthProvider,
-  User 
+  User,
+  getAuth,
+  signInWithPopup
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebaseConfig';
 import { Platform, Alert } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
+import * as AuthSession from 'expo-auth-session';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -44,6 +48,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Set up Google Auth Request
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+    clientId: 'YOUR_WEB_CLIENT_ID', // Get this from Google Cloud Console
+    androidClientId: 'YOUR_ANDROID_CLIENT_ID', // Get this from Google Cloud Console
+    iosClientId: 'YOUR_IOS_CLIENT_ID', // Get this from Google Cloud Console
+  });
+
+  // Handle Google Sign in response
+  useEffect(() => {
+    if (response?.type === 'success') {
+      const { id_token } = response.params;
+      const credential = GoogleAuthProvider.credential(id_token);
+      signInWithCredential(auth, credential)
+        .catch(err => {
+          setError('Failed to sign in with Google: ' + err.message);
+        });
+    }
+  }, [response]);
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
@@ -74,17 +97,30 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const signInWithGoogle = async () => {
     setError(null);
     try {
-      // On mobile, we need to use a different approach than popup
-      // For now, let's show an informative message
-      Alert.alert(
-        "Google Sign-In Not Available",
-        "Google Sign-in is currently being updated. Please use email/password login for now.",
-        [{ text: "OK" }]
-      );
-      // Mock error to prevent continuing
-      throw new Error("Google Sign-in is currently unavailable");
+      if (Platform.OS === 'web') {
+        // Web implementation
+        try {
+          await signInWithPopup(auth, googleProvider);
+        } catch (err: any) {
+          console.error("Web Google sign-in error:", err);
+          throw err;
+        }
+      } else {
+        // Mobile implementation
+        if (!request) {
+          setError('Google Authentication request failed to initialize');
+          throw new Error('Google Authentication request failed to initialize');
+        }
+        
+        await promptAsync();
+        // The result will be handled in the useEffect hook above
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to sign in with Google');
+      let errorMessage = 'Failed to sign in with Google';
+      if (err.message) {
+        errorMessage = err.message;
+      }
+      setError(errorMessage);
       throw err;
     }
   };
