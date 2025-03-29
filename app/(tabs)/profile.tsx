@@ -32,6 +32,10 @@ export default function ProfileScreen() {
     return user.email.charAt(0).toUpperCase();
   };
 
+  const navigateToDebug = () => {
+    router.push('/debug');
+  };
+
   return (
     <ScrollView style={[styles.container, { backgroundColor: bgColor }]}>
       <View style={styles.header}>
@@ -102,6 +106,14 @@ export default function ProfileScreen() {
             <IconSymbol name="globe" size={22} color={tint} />
           </View>
           <Text style={[styles.menuItemText, { color: textColor }]}>Language</Text>
+          <IconSymbol name="chevron.right" size={18} color={isDark ? '#8e8e93' : '#c7c7cc'} />
+        </TouchableOpacity>
+        
+        <TouchableOpacity style={styles.menuItem} onPress={navigateToDebug}>
+          <View style={styles.menuItemIconContainer}>
+            <IconSymbol name="wrench.and.screwdriver" size={22} color={tint} />
+          </View>
+          <Text style={[styles.menuItemText, { color: textColor }]}>Developer Tools</Text>
           <IconSymbol name="chevron.right" size={18} color={isDark ? '#8e8e93' : '#c7c7cc'} />
         </TouchableOpacity>
       </View>

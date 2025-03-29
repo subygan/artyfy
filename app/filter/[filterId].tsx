@@ -1,6 +1,6 @@
 // app/filter/[filterId].tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Image, Alert, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '@/constants/Colors';
@@ -8,7 +8,7 @@ import { IconSymbol } from '@/components/ui/IconSymbol';
 import { ThemedText } from '@/components/ThemedText';
 import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { FilterApi, FilterResponse, ImageApi } from '@/api'; // Import the new API services
+import { FilterApi, FilterResponse, ImageApi, CreateFilterRequest } from '@/api'; // Import the new API services
 
 // Define types matching our backend API
 export interface PhotoItem {
@@ -30,6 +30,11 @@ export default function FilterScreen() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [photos, setPhotos] = useState<PhotoItem[]>([]);
+    const [isNewFilter, setIsNewFilter] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [filterName, setFilterName] = useState('');
+    const [filterDescription, setFilterDescription] = useState('');
+    const [filterType, setFilterType] = useState('custom');
 
     // Fetch filter data when component mounts or filterId changes
     useEffect(() => {
@@ -46,7 +51,7 @@ export default function FilterScreen() {
                 // Handle the special case for creating a new filter
                 if (filterId === 'new') {
                     // Set default values for a new filter
-                    setFilter({
+                    const newFilter = {
                         id: '',
                         user_id: '',
                         name: 'New Filter',
@@ -58,7 +63,12 @@ export default function FilterScreen() {
                         popularity: 0,
                         created_at: new Date().toISOString(),
                         updated_at: new Date().toISOString()
-                    });
+                    };
+                    setFilter(newFilter);
+                    setFilterName(newFilter.name);
+                    setFilterDescription(newFilter.description);
+                    setFilterType(newFilter.settings.type);
+                    setIsNewFilter(true);
                     setPhotos([]);
                     setError(null);
                     setIsLoading(false);
@@ -68,6 +78,10 @@ export default function FilterScreen() {
                 // For existing filters, fetch data from API
                 const filterData = await FilterApi.getFilterById(filterId);
                 setFilter(filterData);
+                setFilterName(filterData.name);
+                setFilterDescription(filterData.description || '');
+                setFilterType(filterData.settings.type);
+                setIsNewFilter(false);
                 
                 // Convert filter example images to photo items if available
                 if (filterData.example_image_url) {
@@ -108,6 +122,19 @@ export default function FilterScreen() {
         if (!result.canceled && result.assets && result.assets.length > 0) {
             const selectedImage = result.assets[0];
             
+            if (isNewFilter) {
+                // For new filters, just add the image to the local state
+                // It will be uploaded when the filter is saved
+                setPhotos(prevPhotos => [
+                    ...prevPhotos,
+                    {
+                        id: `temp-${Date.now()}`,
+                        uri: selectedImage.uri
+                    }
+                ]);
+                return;
+            }
+            
             try {
                 // Upload the image URL to create a record in the database
                 const imageRecord = await ImageApi.uploadImage({
@@ -128,6 +155,69 @@ export default function FilterScreen() {
                 console.error('Error uploading image:', err);
                 Alert.alert("Upload Failed", err.message || "Failed to upload image");
             }
+        }
+    };
+
+    const handleSaveFilter = async () => {
+        if (!filterName.trim()) {
+            Alert.alert("Validation Error", "Filter name cannot be empty");
+            return;
+        }
+
+        try {
+            setIsSaving(true);
+            
+            // Prepare the filter data
+            const filterData: CreateFilterRequest = {
+                name: filterName,
+                description: filterDescription,
+                settings: { 
+                    type: filterType, 
+                    params: {} 
+                },
+                is_public: false
+            };
+            
+            // If we have an example image, include it
+            if (photos.length > 0) {
+                // We need to convert the URI to a file object
+                // This is a simplified approach - in a real app you might need to
+                // fetch the actual file data and create a proper File object
+                const exampleImageUri = photos[0].uri;
+                
+                // Create a mock File/Blob object that works with FormData
+                // Note: The exact implementation might differ based on your platform and requirements
+                const uriParts = exampleImageUri.split('.');
+                const fileType = uriParts[uriParts.length - 1];
+                
+                // For React Native, we can pass the URI directly
+                // The API client will handle it appropriately
+                filterData.example_image = {
+                    uri: exampleImageUri,
+                    name: `example_image.${fileType}`,
+                    type: `image/${fileType}`
+                } as any;
+            }
+            
+            // Create the filter
+            const newFilter = await FilterApi.createFilter(filterData);
+            
+            // Navigate to the newly created filter
+            Alert.alert(
+                "Success", 
+                "Filter created successfully!",
+                [
+                    { 
+                        text: "View Filter", 
+                        onPress: () => router.replace(`/filter/${newFilter.id}`) 
+                    }
+                ]
+            );
+        } catch (err: any) {
+            console.error('Error creating filter:', err);
+            Alert.alert("Error", err.message || "Failed to create filter");
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -165,23 +255,59 @@ export default function FilterScreen() {
         <ThemedView style={styles.container}>
             <Stack.Screen
                 options={{
-                    title: filter?.name || 'Filter Details',
+                    title: isNewFilter ? 'Create New Filter' : filter?.name || 'Filter Details',
                     headerBackTitle: 'Back',
                 }}
             />
 
             <View style={styles.header}>
-                <ThemedText style={styles.title}>{filter?.name || 'Unnamed Filter'}</ThemedText>
-                <ThemedText style={styles.description}>{filter?.description || 'No description available'}</ThemedText>
+                {isNewFilter ? (
+                    <>
+                        <TextInput
+                            style={[styles.textInput, styles.title]}
+                            value={filterName}
+                            onChangeText={setFilterName}
+                            placeholder="Enter filter name"
+                            placeholderTextColor="#999"
+                        />
+                        <TextInput
+                            style={[styles.textInput, styles.description]}
+                            value={filterDescription}
+                            onChangeText={setFilterDescription}
+                            placeholder="Enter filter description"
+                            placeholderTextColor="#999"
+                            multiline
+                        />
+                    </>
+                ) : (
+                    <>
+                        <ThemedText style={styles.title}>{filter?.name || 'Unnamed Filter'}</ThemedText>
+                        <ThemedText style={styles.description}>{filter?.description || 'No description available'}</ThemedText>
+                    </>
+                )}
             </View>
 
             <View style={styles.section}>
                 <ThemedText style={styles.sectionTitle}>Filter Type</ThemedText>
-                <ThemedText>{filter?.settings?.type || 'Unknown'}</ThemedText>
+                {isNewFilter ? (
+                    <Pressable 
+                        style={styles.typeSelector}
+                        onPress={() => {
+                            // In a real app, you might show a picker here
+                            // For simplicity, we'll just toggle between a few types
+                            setFilterType(filterType === 'custom' ? 'artistic' : 'custom');
+                        }}
+                    >
+                        <ThemedText>{filterType}</ThemedText>
+                        <IconSymbol name="chevron.down" size={16} color={Colors[colorScheme ?? 'light'].text} />
+                    </Pressable>
+                ) : (
+                    <ThemedText>{filter?.settings?.type || 'Unknown'}</ThemedText>
+                )}
             </View>
 
             <View style={styles.section}>
-                <ThemedText style={styles.sectionTitle}>Your Photos</ThemedText>
+                <ThemedText style={styles.sectionTitle}>{isNewFilter ? 'Example Photo' : 'Your Photos'}</ThemedText>
                 <FlatList
                     data={itemsWithUpload}
                     renderItem={renderPhotoItem}
@@ -193,52 +319,72 @@ export default function FilterScreen() {
             </View>
 
             <View style={styles.actions}>
-                <Pressable
-                    style={({ pressed }) => [
-                        styles.button,
-                        {
-                            backgroundColor: Colors[colorScheme ?? 'light'].tint,
-                            opacity: pressed ? 0.8 : 1
-                        }
-                    ]}
-                    onPress={() => {
-                        // Process images with selected filter
-                        if (filter && photos.length > 0) {
-                            Alert.alert(
-                                "Process Images", 
-                                "Do you want to process your images with this filter?",
-                                [
-                                    { text: "Cancel", style: "cancel" },
-                                    { 
-                                        text: "Process", 
-                                        onPress: async () => {
-                                            try {
-                                                // Extract image IDs (excluding the example images that might not have real IDs)
-                                                const imageIds = photos
-                                                    .filter(photo => !photo.id.startsWith('example-'))
-                                                    .map(photo => photo.id);
-                                                
-                                                if (imageIds.length === 0) {
-                                                    Alert.alert("No Images", "Please upload at least one image to process");
-                                                    return;
+                {isNewFilter ? (
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.button,
+                            {
+                                backgroundColor: Colors[colorScheme ?? 'light'].tint,
+                                opacity: pressed || isSaving ? 0.8 : 1
+                            }
+                        ]}
+                        onPress={handleSaveFilter}
+                        disabled={isSaving}
+                    >
+                        {isSaving ? (
+                            <ActivityIndicator color="white" size="small" />
+                        ) : (
+                            <ThemedText style={styles.buttonText}>Save Filter</ThemedText>
+                        )}
+                    </Pressable>
+                ) : (
+                    <Pressable
+                        style={({ pressed }) => [
+                            styles.button,
+                            {
+                                backgroundColor: Colors[colorScheme ?? 'light'].tint,
+                                opacity: pressed ? 0.8 : 1
+                            }
+                        ]}
+                        onPress={() => {
+                            // Process images with selected filter
+                            if (filter && photos.length > 0) {
+                                Alert.alert(
+                                    "Process Images", 
+                                    "Do you want to process your images with this filter?",
+                                    [
+                                        { text: "Cancel", style: "cancel" },
+                                        { 
+                                            text: "Process", 
+                                            onPress: async () => {
+                                                try {
+                                                    // Extract image IDs (excluding the example images that might not have real IDs)
+                                                    const imageIds = photos
+                                                        .filter(photo => !photo.id.startsWith('example-'))
+                                                        .map(photo => photo.id);
+                                                    
+                                                    if (imageIds.length === 0) {
+                                                        Alert.alert("No Images", "Please upload at least one image to process");
+                                                        return;
+                                                    }
+                                                    
+                                                    // Navigate to a processing screen or show progress here
+                                                    Alert.alert("Processing Started", "Your images are being processed. You'll be notified when they're ready.");
+                                                } catch (err: any) {
+                                                    Alert.alert("Error", err.message || "Failed to start processing");
                                                 }
-                                                
-                                                // Navigate to a processing screen or show progress here
-                                                Alert.alert("Processing Started", "Your images are being processed. You'll be notified when they're ready.");
-                                            } catch (err: any) {
-                                                Alert.alert("Error", err.message || "Failed to start processing");
                                             }
                                         }
-                                    }
-                                ]
-                            );
-                        } else {
-                            Alert.alert("No Images", "Please upload at least one image to process");
-                        }
-                    }}
-                >
-                    <ThemedText style={styles.buttonText}>Process Images</ThemedText>
-                </Pressable>
+                                    ]
+                                );
+                            } else {
+                                Alert.alert("No Images", "Please upload at least one image to process");
+                            }
+                        }}
+                    >
+                        <ThemedText style={styles.buttonText}>Process Images</ThemedText>
+                    </Pressable>
+                )}
             </View>
         </ThemedView>
     );
@@ -316,5 +462,23 @@ const styles = StyleSheet.create({
         color: 'white',
         fontWeight: 'bold',
         fontSize: 16,
+    },
+    textInput: {
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#ddd',
+        borderRadius: 4,
+        backgroundColor: '#fff',
+        marginBottom: 8,
+    },
+    typeSelector: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: 8,
+        borderWidth: 1,
+        borderColor: '#ddd',
+        borderRadius: 4,
+        backgroundColor: '#fff',
     },
 });
