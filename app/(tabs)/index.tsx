@@ -36,7 +36,7 @@ export default function HomeScreen() {
   const { width } = useWindowDimensions();
 
   // Calculate item size for 2 columns with margins
-  const itemSize = (width - 48) / 2; // 16px padding on sides + 16px between items
+  const itemSize = (width - 64) / 2; // 16px padding sides (32 total) + 8px margin sides per item (32 total) = 64
 
   const navigateToFilter = (filter: FilterItem) => {
     if (filter.isCreate) {
@@ -97,14 +97,6 @@ export default function HomeScreen() {
   };
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
       <ThemedView style={styles.container}>
         <ThemedView style={styles.header}>
           <ThemedText type="title">Artyfy</ThemedText>
@@ -121,7 +113,6 @@ export default function HomeScreen() {
           showsVerticalScrollIndicator={false}
         />
       </ThemedView>
-    </ParallaxScrollView>
   );
 }
 
@@ -139,10 +130,10 @@ const styles = StyleSheet.create({
     paddingBottom: 20, // Add padding to avoid cutting off last row
   },
   columnWrapper: {
-    justifyContent: 'space-between',
     marginBottom: 16,
   },
   filterItem: {
+    marginHorizontal: 8, // Add horizontal margin for spacing
     borderRadius: 12,
     padding: 16,
     justifyContent: 'space-between',
@@ -165,12 +156,5 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: 'bold',
     textAlign: 'center',
-  },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
   },
 });
