@@ -2,95 +2,132 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Image, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { getFilterData, FilterData, PhotoItem } from '@/api/filters'; // Import the API functions
-import { ThemedView } from '@/components/ThemedView';
-import { ThemedText } from '@/components/ThemedText';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '@/constants/Colors';
+import { IconSymbol } from '@/components/ui/IconSymbol';
+import { ThemedText } from '@/components/ThemedText';
+import { ThemedView } from '@/components/ThemedView';
 import { useColorScheme } from '@/hooks/useColorScheme';
-import { IconSymbol } from '@/components/ui/IconSymbol'; // Assuming you have this
-import * as ImagePicker from 'expo-image-picker'; // Import ImagePicker
+import { FilterApi, FilterResponse, ImageApi } from '@/api'; // Import the new API services
 
-// Placeholder type for photos to upload/display
-interface PhotoItem {
+// Define types matching our backend API
+export interface PhotoItem {
     id: string;
-    uri: string; // Local URI or remote URL
+    uri: string;
     isUpload?: boolean;
 }
 
-type GridItem = PhotoItem | { isUpload: true };
+interface GridItem extends PhotoItem {
+    isUpload?: boolean;
+}
 
 export default function FilterScreen() {
+    const { filterId } = useLocalSearchParams();
     const router = useRouter();
-    const { filterId } = useLocalSearchParams<{ filterId: string }>();
     const colorScheme = useColorScheme();
-    const [filterData, setFilterData] = useState<FilterData | null>(null);
+    
+    const [filter, setFilter] = useState<FilterResponse | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [photos, setPhotos] = useState<PhotoItem[]>([]);
 
-    // Placeholder photo data
-    const [photos, setPhotos] = useState<GridItem[]>([
-        { id: 'upload', uri: '', isUpload: true },
-        // Add more photos here if needed, e.g., from device gallery
-    ]);
-
+    // Fetch filter data when component mounts or filterId changes
     useEffect(() => {
-        if (!filterId || filterId === 'new') {
-            // Handle new filter creation state
-            setFilterData({ id: 'new', prompt: 'Describe your new filter style...' });
-            setIsLoading(false);
-        } else {
-            // Fetch existing filter data
-            const fetchData = async () => {
-                try {
-                    setIsLoading(true);
-                    const data = await getFilterData(filterId);
-                    if (data) {
-                        setFilterData(data);
-                    } else {
-                        setError('Filter not found.');
-                        // Optionally navigate back or show a specific message
-                    }
-                } catch (err) {
-                    console.error("Error fetching filter data:", err);
-                    setError('Failed to load filter data.');
-                } finally {
+        async function fetchFilterData() {
+            if (!filterId || typeof filterId !== 'string') {
+                setError('Invalid filter ID');
+                setIsLoading(false);
+                return;
+            }
+
+            try {
+                setIsLoading(true);
+                
+                // Handle the special case for creating a new filter
+                if (filterId === 'new') {
+                    // Set default values for a new filter
+                    setFilter({
+                        id: '',
+                        user_id: '',
+                        name: 'New Filter',
+                        description: 'Add a description for your filter',
+                        settings: { type: 'custom', params: {} },
+                        is_default: false,
+                        is_public: false,
+                        example_image_url: '',
+                        popularity: 0,
+                        created_at: new Date().toISOString(),
+                        updated_at: new Date().toISOString()
+                    });
+                    setPhotos([]);
+                    setError(null);
                     setIsLoading(false);
+                    return;
                 }
-            };
-            fetchData();
+                
+                // For existing filters, fetch data from API
+                const filterData = await FilterApi.getFilterById(filterId);
+                setFilter(filterData);
+                
+                // Convert filter example images to photo items if available
+                if (filterData.example_image_url) {
+                    setPhotos([{
+                        id: 'example-1',
+                        uri: filterData.example_image_url
+                    }]);
+                }
+                
+                setError(null);
+            } catch (err: any) {
+                console.error('Error fetching filter:', err);
+                setError(err.message || 'Failed to load filter data');
+            } finally {
+                setIsLoading(false);
+            }
         }
+
+        fetchFilterData();
     }, [filterId]);
 
-    const handleEditPress = () => {
-        if (!filterId) return;
-        router.push(`/filter/edit/${filterId}`); // Navigate to the edit screen
-    };
-
     const handleUploadPress = async () => {
-        // Request permission
+        // Request permission to access the media library
         const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        
         if (status !== 'granted') {
-            Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+            Alert.alert('Permission Required', 'We need access to your media library to upload photos.');
             return;
         }
 
-        // Launch image library
-        let result = await ImagePicker.launchImageLibraryAsync({
+        // Launch the image picker
+        const result = await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.Images,
-            // allowsEditing: true, // Optional
-            // aspect: [4, 3],    // Optional
-            quality: 1,
+            allowsEditing: true,
+            quality: 0.8,
         });
 
         if (!result.canceled && result.assets && result.assets.length > 0) {
-            const selectedImageUri = result.assets[0].uri;
-            console.log('Selected Image URI:', selectedImageUri);
-            // TODO: Implement the actual upload logic here
-            // 1. Upload the image (e.g., to Firebase Storage)
-            // 2. Get the uploaded image URL
-            // 3. Update the filter data in your backend/API to include this new photo
-            // 4. Potentially refresh the filter data displayed on this screen
-            Alert.alert("Image Selected", `URI: ${selectedImageUri}\nUpload logic needs to be implemented.`);
+            const selectedImage = result.assets[0];
+            
+            try {
+                // Upload the image URL to create a record in the database
+                const imageRecord = await ImageApi.uploadImage({
+                    original_url: selectedImage.uri
+                });
+                
+                // Add the new image to the photos list
+                setPhotos(prevPhotos => [
+                    ...prevPhotos,
+                    {
+                        id: imageRecord.id,
+                        uri: imageRecord.original_url
+                    }
+                ]);
+                
+                Alert.alert("Image Uploaded", "Your image has been uploaded successfully!");
+            } catch (err: any) {
+                console.error('Error uploading image:', err);
+                Alert.alert("Upload Failed", err.message || "Failed to upload image");
+            }
         }
     };
 
@@ -103,10 +140,9 @@ export default function FilterScreen() {
                 </Pressable>
             );
         }
-        // TODO: Render actual photo thumbnails
         return (
             <View style={styles.photoTile}>
-                <Image source={{ uri: item.uri || 'https://via.placeholder.com/150' }} style={styles.photoImage} />
+                <Image source={{ uri: item.uri }} style={styles.photoImage} />
             </View>
         );
     };
@@ -119,41 +155,91 @@ export default function FilterScreen() {
         return <ThemedView style={styles.center}><ThemedText>Error: {error}</ThemedText></ThemedView>;
     }
 
-    if (!filterData) {
-        return <ThemedView style={styles.center}><ThemedText>No filter data available.</ThemedText></ThemedView>;
-    }
-
-    const isCreatingNew = filterId === 'new';
+    // Combine actual photos with the upload button item
+    const itemsWithUpload: GridItem[] = [
+        { id: 'upload', uri: '', isUpload: true },
+        ...photos
+    ];
 
     return (
         <ThemedView style={styles.container}>
-            <Stack.Screen options={{ title: isCreatingNew ? 'Create Filter' : filterData.prompt.substring(0, 20) + '...' }} />
-            {/* Top Bar */}
-            <Pressable onPress={handleEditPress} style={styles.topBar}>
-                <View style={styles.promptContainer}>
-                    <ThemedText style={styles.promptText} numberOfLines={2}>{filterData.prompt}</ThemedText>
-                    {/* Simple Edit Icon */}
-                    <IconSymbol name="pencil" size={18} color={Colors[colorScheme ?? 'light'].tint} />
-                </View>
-                {/* Display small associated images - Placeholder */}
-                <View style={styles.imagePreviewContainer}>
-                    {(filterData.imageUrls || []).slice(0, 3).map((url, index) => (
-                        <Image key={index} source={{ uri: url }} style={styles.previewImage} />
-                    ))}
-                    {/* Show placeholder if no images */}
-                    {(filterData.imageUrls || []).length === 0 && <View style={styles.previewImagePlaceholder}><ThemedText style={{ fontSize: 10 }}>No previews</ThemedText></View>}
-                </View>
-            </Pressable>
-
-            {/* Photo Upload/Display Area */}
-            <FlatList
-                data={photos}
-                renderItem={renderPhotoItem}
-                keyExtractor={(item) => item.id}
-                numColumns={3} // Adjust as needed
-                contentContainerStyle={styles.photoListContent}
-                ListHeaderComponent={<ThemedText style={styles.sectionTitle}>Apply filter to photos:</ThemedText>}
+            <Stack.Screen
+                options={{
+                    title: filter?.name || 'Filter Details',
+                    headerBackTitle: 'Back',
+                }}
             />
+
+            <View style={styles.header}>
+                <ThemedText style={styles.title}>{filter?.name || 'Unnamed Filter'}</ThemedText>
+                <ThemedText style={styles.description}>{filter?.description || 'No description available'}</ThemedText>
+            </View>
+
+            <View style={styles.section}>
+                <ThemedText style={styles.sectionTitle}>Filter Type</ThemedText>
+                <ThemedText>{filter?.settings?.type || 'Unknown'}</ThemedText>
+            </View>
+
+            <View style={styles.section}>
+                <ThemedText style={styles.sectionTitle}>Your Photos</ThemedText>
+                <FlatList
+                    data={itemsWithUpload}
+                    renderItem={renderPhotoItem}
+                    keyExtractor={item => item.id}
+                    horizontal={true}
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.photosList}
+                />
+            </View>
+
+            <View style={styles.actions}>
+                <Pressable
+                    style={({ pressed }) => [
+                        styles.button,
+                        {
+                            backgroundColor: Colors[colorScheme ?? 'light'].tint,
+                            opacity: pressed ? 0.8 : 1
+                        }
+                    ]}
+                    onPress={() => {
+                        // Process images with selected filter
+                        if (filter && photos.length > 0) {
+                            Alert.alert(
+                                "Process Images", 
+                                "Do you want to process your images with this filter?",
+                                [
+                                    { text: "Cancel", style: "cancel" },
+                                    { 
+                                        text: "Process", 
+                                        onPress: async () => {
+                                            try {
+                                                // Extract image IDs (excluding the example images that might not have real IDs)
+                                                const imageIds = photos
+                                                    .filter(photo => !photo.id.startsWith('example-'))
+                                                    .map(photo => photo.id);
+                                                
+                                                if (imageIds.length === 0) {
+                                                    Alert.alert("No Images", "Please upload at least one image to process");
+                                                    return;
+                                                }
+                                                
+                                                // Navigate to a processing screen or show progress here
+                                                Alert.alert("Processing Started", "Your images are being processed. You'll be notified when they're ready.");
+                                            } catch (err: any) {
+                                                Alert.alert("Error", err.message || "Failed to start processing");
+                                            }
+                                        }
+                                    }
+                                ]
+                            );
+                        } else {
+                            Alert.alert("No Images", "Please upload at least one image to process");
+                        }
+                    }}
+                >
+                    <ThemedText style={styles.buttonText}>Process Images</ThemedText>
+                </Pressable>
+            </View>
         </ThemedView>
     );
 }
@@ -166,72 +252,69 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        padding: 16,
     },
-    topBar: {
-        padding: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: Colors.light.border, // Use dynamic color later
-        backgroundColor: Colors.light.card, // Use dynamic color later
-        marginBottom: 16,
+    header: {
+        padding: 20,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: '#ccc',
     },
-    promptContainer: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start', // Align items to the start
+    title: {
+        fontSize: 24,
+        fontWeight: 'bold',
         marginBottom: 8,
     },
-    promptText: {
+    description: {
         fontSize: 16,
-        fontWeight: '500',
-        flex: 1, // Allow text to take available space
-        marginRight: 8, // Add space between text and icon
+        opacity: 0.8,
     },
-    imagePreviewContainer: {
-        flexDirection: 'row',
-        gap: 8, // Space between preview images
-    },
-    previewImage: {
-        width: 40,
-        height: 40,
-        borderRadius: 4,
-        backgroundColor: '#eee', // Placeholder bg
-    },
-    previewImagePlaceholder: {
-        width: 40,
-        height: 40,
-        borderRadius: 4,
-        backgroundColor: '#f0f0f0',
-        justifyContent: 'center',
-        alignItems: 'center',
+    section: {
+        padding: 20,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: '#ccc',
     },
     sectionTitle: {
         fontSize: 18,
         fontWeight: 'bold',
         marginBottom: 12,
-        paddingHorizontal: 16,
     },
-    photoListContent: {
-        paddingHorizontal: 12, // Adjust for spacing around the grid
+    photosList: {
+        paddingVertical: 10,
     },
     photoTile: {
-        flex: 1,
-        aspectRatio: 1,
-        margin: 4, // Gutter between photos
+        width: 120,
+        height: 120,
         borderRadius: 8,
-        backgroundColor: '#ddd', // Placeholder
-        justifyContent: 'center',
-        alignItems: 'center',
+        marginRight: 12,
         overflow: 'hidden',
-    },
-    uploadTile: {
-        borderWidth: 2,
-        borderStyle: 'dashed',
-        borderColor: Colors.light.text, // Use dynamic color later
-        backgroundColor: 'transparent',
     },
     photoImage: {
         width: '100%',
         height: '100%',
-    }
+    },
+    uploadTile: {
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 2,
+        borderStyle: 'dashed',
+        borderColor: '#ccc',
+        backgroundColor: 'rgba(200, 200, 200, 0.2)',
+    },
+    actions: {
+        padding: 20,
+        flexDirection: 'row',
+        justifyContent: 'center',
+    },
+    button: {
+        paddingVertical: 12,
+        paddingHorizontal: 24,
+        borderRadius: 8,
+        alignItems: 'center',
+        justifyContent: 'center',
+        minWidth: 200,
+    },
+    buttonText: {
+        color: 'white',
+        fontWeight: 'bold',
+        fontSize: 16,
+    },
 });
