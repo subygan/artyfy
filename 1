@@ -1,0 +1,358 @@
+filter page
+# Please enter the commit message for your changes. Lines starting
+# with '#' will be ignored, and an empty message aborts the commit.
+#
+# On branch main
+# Your branch is ahead of 'origin/main' by 1 commit.
+#   (use "git push" to publish your local commits)
+#
+# Changes to be committed:
+#	modified:   .gitignore
+#	modified:   app/filter/edit/[filterId].tsx
+#	modified:   package.json
+#	modified:   yarn.lock
+#
+# ------------------------ >8 ------------------------
+# Do not modify or remove the line above.
+# Everything below it will be ignored.
+diff --git a/.gitignore b/.gitignore
+index 6944c1e..34d7091 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -38,4 +38,4 @@ yarn-error.*
+ app-example
+ firebaseConfig.js
+ GoogleService-Info.plist
+-google-services.json
++google-services.json
+\ No newline at end of file
+diff --git a/app/filter/edit/[filterId].tsx b/app/filter/edit/[filterId].tsx
+index ab76d88..57c8024 100644
+--- a/app/filter/edit/[filterId].tsx
++++ b/app/filter/edit/[filterId].tsx
+@@ -1,12 +1,13 @@
+ // app/filter/edit/[filterId].tsx
+ import React, { useState, useEffect } from 'react';
+-import { View, TextInput, StyleSheet, Pressable, ActivityIndicator, Alert, Text } from 'react-native';
++import { View, TextInput, StyleSheet, Pressable, ActivityIndicator, Alert, Text, Image } from 'react-native';
+ import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+ import { getFilterData, updateFilterData, createFilter, FilterData } from '@/api/filters'; // Import API functions
+ import { ThemedView } from '@/components/ThemedView';
+ import { ThemedText } from '@/components/ThemedText';
+ import { Colors } from '@/constants/Colors';
+ import { useColorScheme } from '@/hooks/useColorScheme';
++import * as ImagePicker from 'expo-image-picker'; // Added ImagePicker import
+ 
+ export default function EditFilterScreen() {
+     const router = useRouter();
+@@ -14,6 +15,7 @@ export default function EditFilterScreen() {
+     const colorScheme = useColorScheme();
+     const [prompt, setPrompt] = useState('');
+     const [originalPrompt, setOriginalPrompt] = useState('');
++    const [imageUri, setImageUri] = useState<string | null>(null); // State for selected image URI
+     const [isLoading, setIsLoading] = useState(true);
+     const [isSaving, setIsSaving] = useState(false);
+     const [error, setError] = useState<string | null>(null);
+@@ -24,11 +26,11 @@ export default function EditFilterScreen() {
+         if (isCreatingNew) {
+             setPrompt(''); // Start with empty prompt for new filter
+             setOriginalPrompt('');
+-             setIsLoading(false);
++            setIsLoading(false);
+         } else if (filterId) {
+             const fetchData = async () => {
+                 try {
+-                     setIsLoading(true);
++                    setIsLoading(true);
+                     const data = await getFilterData(filterId);
+                     if (data) {
+                         setPrompt(data.prompt);
+@@ -40,13 +42,36 @@ export default function EditFilterScreen() {
+                     console.error("Error fetching filter data:", err);
+                     setError('Failed to load filter details.');
+                 } finally {
+-                     setIsLoading(false);
++                    setIsLoading(false);
+                 }
+             };
+             fetchData();
+         }
+     }, [filterId, isCreatingNew]);
+ 
++    // Function to handle image picking
++    const pickImage = async () => {
++        // Request permission
++        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
++        if (status !== 'granted') {
++            Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
++            return;
++        }
++
++        // Launch image library
++        let result = await ImagePicker.launchImageLibraryAsync({
++            mediaTypes: ImagePicker.MediaTypeOptions.Images,
++            allowsEditing: true,
++            aspect: [4, 3], // Optional: Define aspect ratio
++            quality: 1, // Optional: Define image quality
++        });
++
++        // console.log(result); // For debugging
++
++        if (!result.canceled) {
++            setImageUri(result.assets[0].uri);
++        }
++    };
+ 
+     const handleSave = async () => {
+         if (!prompt.trim()) {
+@@ -61,36 +86,36 @@ export default function EditFilterScreen() {
+ 
+         try {
+             if (isCreatingNew) {
+-                 // Call create API
+-                 const newFilter = await createFilter(prompt);
+-                 if (newFilter) {
+-                     success = true;
+-                     newFilterId = newFilter.id; // Get the ID assigned by the backend
+-                     Alert.alert("Success", "New filter created!");
+-                 } else {
+-                     setError('Failed to create filter.');
+-                 }
++                // Call create API
++                const newFilter = await createFilter(prompt);
++                if (newFilter) {
++                    success = true;
++                    newFilterId = newFilter.id; // Get the ID assigned by the backend
++                    Alert.alert("Success", "New filter created!");
++                } else {
++                    setError('Failed to create filter.');
++                }
+ 
+             } else if (filterId) {
+-                 // Call update API
++                // Call update API
+                 const filterData: FilterData = { id: filterId, prompt }; // Include other fields if needed
+                 success = await updateFilterData(filterData);
+-                 if (success) {
+-                     Alert.alert("Success", "Filter updated!");
+-                 } else {
+-                     setError('Failed to update filter.');
+-                 }
++                if (success) {
++                    Alert.alert("Success", "Filter updated!");
++                } else {
++                    setError('Failed to update filter.');
++                }
+             }
+ 
+-             if (success && newFilterId) {
+-                 // Navigate back to the main filter screen (or potentially the newly created filter)
+-                 // Using replace to avoid going back to the edit screen from the filter screen
+-                 if (isCreatingNew) {
+-                     router.replace(`/filter/${newFilterId}`);
+-                 } else {
+-                      router.back();
+-                 }
+-             }
++            if (success && newFilterId) {
++                // Navigate back to the main filter screen (or potentially the newly created filter)
++                // Using replace to avoid going back to the edit screen from the filter screen
++                if (isCreatingNew) {
++                    router.replace(`/filter/${newFilterId}`);
++                } else {
++                    router.back();
++                }
++            }
+ 
+         } catch (err) {
+             console.error("Error saving filter:", err);
+@@ -113,34 +138,52 @@ export default function EditFilterScreen() {
+     const placeholderTextColor = Colors[colorScheme ?? 'light'].textMuted;
+     const buttonDisabled = isLoading || isSaving || prompt === originalPrompt;
+ 
+-
+     return (
+         <ThemedView style={styles.container}>
+-             <Stack.Screen options={{ title: isCreatingNew ? "Create Filter Prompt" : "Edit Filter Prompt" }} />
++            <Stack.Screen options={{ title: isCreatingNew ? "Create Filter Prompt" : "Edit Filter Prompt" }} />
++            {/* Prompt Input */}
+             <ThemedText style={styles.label}>Filter Prompt:</ThemedText>
+             <TextInput
+                 style={[styles.input, { backgroundColor: inputBgColor, color: textColor, borderColor: Colors[colorScheme ?? 'light'].border }]}
+                 value={prompt}
+                 onChangeText={setPrompt}
+                 placeholder="e.g., Cinematic, vibrant, golden hour..."
+-                 placeholderTextColor={placeholderTextColor}
++                placeholderTextColor={placeholderTextColor}
+                 multiline
+                 editable={!isSaving} // Disable input while saving
+             />
+ 
+-             {error && isSaving && <ThemedText style={styles.errorText}>Error: {error}</ThemedText>}
++            {/* Image Picker Button */}
++            <Pressable
++                style={[styles.button, styles.pickImageButton, { backgroundColor: Colors[colorScheme ?? 'light'].secondaryButtonBackground }]} // Style as needed
++                onPress={pickImage}
++                disabled={isSaving}
++            >
++                <Text style={[styles.buttonText, { color: Colors[colorScheme ?? 'light'].text }]}>Pick an Image</Text>
++            </Pressable>
++
++            {/* Image Preview */}
++            {imageUri && (
++                <View style={styles.imagePreviewContainer}>
++                    <ThemedText style={styles.label}>Selected Image:</ThemedText>
++                    <Image source={{ uri: imageUri }} style={styles.imagePreview} />
++                </View>
++            )}
++
++            {error && isSaving && <ThemedText style={styles.errorText}>Error: {error}</ThemedText>}
+ 
++            {/* Save/Create Button */}
+             <Pressable
+-                 style={[styles.button, { backgroundColor: Colors[colorScheme ?? 'light'].tint }, buttonDisabled && styles.buttonDisabled]}
+-                 onPress={handleSave}
+-                 disabled={buttonDisabled}
+-             >
+-                 {isSaving ? (
+-                     <ActivityIndicator color="#fff" />
+-                 ) : (
+-                     <Text style={styles.buttonText}>{isCreatingNew ? 'Create Filter' : 'Save Changes'}</Text>
+-                 )}
+-             </Pressable>
++                style={[styles.button, { backgroundColor: Colors[colorScheme ?? 'light'].tint }, buttonDisabled && styles.buttonDisabled]}
++                onPress={handleSave}
++                disabled={buttonDisabled}
++            >
++                {isSaving ? (
++                    <ActivityIndicator color="#fff" />
++                ) : (
++                    <Text style={styles.buttonText}>{isCreatingNew ? 'Create Filter' : 'Save Changes'}</Text>
++                )}
++            </Pressable>
+         </ThemedView>
+     );
+ }
+@@ -151,14 +194,15 @@ const styles = StyleSheet.create({
+         padding: 16,
+     },
+     center: {
+-         flex: 1,
+-         justifyContent: 'center',
+-         alignItems: 'center',
+-     },
++        flex: 1,
++        justifyContent: 'center',
++        alignItems: 'center',
++    },
+     label: {
+         fontSize: 16,
+         fontWeight: 'bold',
+         marginBottom: 8,
++        marginTop: 16, // Add margin top for spacing
+     },
+     input: {
+         borderWidth: 1,
+@@ -167,26 +211,46 @@ const styles = StyleSheet.create({
+         fontSize: 16,
+         minHeight: 100, // Adjust height as needed
+         textAlignVertical: 'top', // Align text to top for multiline
+-        marginBottom: 20,
++        // marginBottom: 20, // Removed margin to place button closer
++    },
++    button: {
++        paddingVertical: 12,
++        paddingHorizontal: 24,
++        borderRadius: 8,
++        alignItems: 'center',
++        justifyContent: 'center',
++        marginTop: 20, // Added margin top for spacing between elements
++    },
++    pickImageButton: {
++        // Specific styles for the image picker button if needed
++        // Example: use a different background color
++        // backgroundColor: '#ddd',
++    },
++    buttonDisabled: {
++        opacity: 0.6,
++    },
++    buttonText: {
++        // color: '#fff', // Moved specific color to inline style
++        fontSize: 16,
++        fontWeight: 'bold',
++    },
++    errorText: {
++        color: 'red',
++        textAlign: 'center',
++        marginBottom: 10,
++        marginTop: 10, // Added margin top
++    },
++    imagePreviewContainer: {
++        marginTop: 20, // Add space above the preview
++        alignItems: 'center', // Center the preview image
+     },
+-     button: {
+-         paddingVertical: 12,
+-         paddingHorizontal: 24,
+-         borderRadius: 8,
+-         alignItems: 'center',
+-         justifyContent: 'center',
+-     },
+-     buttonDisabled: {
+-         opacity: 0.6,
+-     },
+-     buttonText: {
+-         color: '#fff',
+-         fontSize: 16,
+-         fontWeight: 'bold',
+-     },
+-     errorText: {
+-         color: 'red',
+-         textAlign: 'center',
+-         marginBottom: 10,
+-     }
++    imagePreview: {
++        width: 200,
++        height: 150,
++        borderRadius: 8,
++        marginTop: 8,
++        borderWidth: 1,
++        // borderColor: Colors[colorScheme ?? 'light'].border, // Requires colorScheme in scope
++        borderColor: '#ccc', // Simple fallback border color
++    }
+ });
+diff --git a/package.json b/package.json
+index 97c90b0..72fdcb4 100644
+--- a/package.json
++++ b/package.json
+@@ -25,6 +25,7 @@
+     "expo-crypto": "~14.0.2",
+     "expo-font": "~13.0.4",
+     "expo-haptics": "~14.0.1",
++    "expo-image-picker": "^16.0.6",
+     "expo-linking": "~7.0.5",
+     "expo-router": "~4.0.19",
+     "expo-splash-screen": "~0.29.22",
+diff --git a/yarn.lock b/yarn.lock
+index 167fcfa..8033756 100644
+--- a/yarn.lock
++++ b/yarn.lock
+@@ -3686,6 +3686,18 @@ expo-haptics@~14.0.1:
+   resolved "https://registry.yarnpkg.com/expo-haptics/-/expo-haptics-14.0.1.tgz#ff4ead605e33f1917e615c9328af7ac1c34892dc"
+   integrity sha512-V81FZ7xRUfqM6uSI6FA1KnZ+QpEKnISqafob/xEfcx1ymwhm4V3snuLWWFjmAz+XaZQTqlYa8z3QbqEXz7G63w==
+ 
++expo-image-loader@~5.0.0:
++  version "5.0.0"
++  resolved "https://registry.yarnpkg.com/expo-image-loader/-/expo-image-loader-5.0.0.tgz#4f58a21ab26e40d6fccc211b664fd9fe21a5dcb8"
++  integrity sha512-Eg+5FHtyzv3Jjw9dHwu2pWy4xjf8fu3V0Asyy42kO+t/FbvW/vjUixpTjPtgKQLQh+2/9Nk4JjFDV6FwCnF2ZA==
++
++expo-image-picker@^16.0.6:
++  version "16.0.6"
++  resolved "https://registry.yarnpkg.com/expo-image-picker/-/expo-image-picker-16.0.6.tgz#ab1378711813a8c857ee577a97ce43e31ea84ab5"
++  integrity sha512-HN4xZirFjsFDIsWFb12AZh19fRzuvZjj2ll17cGr19VNRP06S/VPQU3Tdccn5vwUzQhOBlLu704CnNm278boiQ==
++  dependencies:
++    expo-image-loader "~5.0.0"
++
+ expo-keep-awake@~14.0.3:
+   version "14.0.3"
+   resolved "https://registry.yarnpkg.com/expo-keep-awake/-/expo-keep-awake-14.0.3.tgz#74c91b68effdb6969bc1e8371621aad90386cfbf"

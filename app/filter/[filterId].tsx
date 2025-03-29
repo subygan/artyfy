@@ -2,12 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, FlatList, ActivityIndicator, Image, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { getFilterData, FilterData } from '@/api/filters'; // Import the API functions
+import { getFilterData, FilterData, PhotoItem } from '@/api/filters'; // Import the API functions
 import { ThemedView } from '@/components/ThemedView';
 import { ThemedText } from '@/components/ThemedText';
 import { Colors } from '@/constants/Colors';
 import { useColorScheme } from '@/hooks/useColorScheme';
 import { IconSymbol } from '@/components/ui/IconSymbol'; // Assuming you have this
+import * as ImagePicker from 'expo-image-picker'; // Import ImagePicker
 
 // Placeholder type for photos to upload/display
 interface PhotoItem {
@@ -15,6 +16,8 @@ interface PhotoItem {
     uri: string; // Local URI or remote URL
     isUpload?: boolean;
 }
+
+type GridItem = PhotoItem | { isUpload: true };
 
 export default function FilterScreen() {
     const router = useRouter();
@@ -25,7 +28,7 @@ export default function FilterScreen() {
     const [error, setError] = useState<string | null>(null);
 
     // Placeholder photo data
-    const [photos, setPhotos] = useState<PhotoItem[]>([
+    const [photos, setPhotos] = useState<GridItem[]>([
         { id: 'upload', uri: '', isUpload: true },
         // Add more photos here if needed, e.g., from device gallery
     ]);
@@ -63,16 +66,39 @@ export default function FilterScreen() {
         router.push(`/filter/edit/${filterId}`); // Navigate to the edit screen
     };
 
-    const handleUploadPress = () => {
-        // TODO: Implement image picker logic
-        Alert.alert("Upload Photo", "Implement image picker to add photos.");
+    const handleUploadPress = async () => {
+        // Request permission
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (status !== 'granted') {
+            Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+            return;
+        }
+
+        // Launch image library
+        let result = await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.Images,
+            // allowsEditing: true, // Optional
+            // aspect: [4, 3],    // Optional
+            quality: 1,
+        });
+
+        if (!result.canceled && result.assets && result.assets.length > 0) {
+            const selectedImageUri = result.assets[0].uri;
+            console.log('Selected Image URI:', selectedImageUri);
+            // TODO: Implement the actual upload logic here
+            // 1. Upload the image (e.g., to Firebase Storage)
+            // 2. Get the uploaded image URL
+            // 3. Update the filter data in your backend/API to include this new photo
+            // 4. Potentially refresh the filter data displayed on this screen
+            Alert.alert("Image Selected", `URI: ${selectedImageUri}\nUpload logic needs to be implemented.`);
+        }
     };
 
-    const renderPhotoItem = ({ item }: { item: PhotoItem }) => {
+    const renderPhotoItem = ({ item }: { item: GridItem }) => {
         if (item.isUpload) {
             return (
                 <Pressable style={[styles.photoTile, styles.uploadTile]} onPress={handleUploadPress}>
-                     <IconSymbol name="plus.circle.fill" size={40} color={Colors[colorScheme ?? 'light'].text} />
+                    <IconSymbol name="plus.circle.fill" size={40} color={Colors[colorScheme ?? 'light'].text} />
                     <ThemedText>Add Photo</ThemedText>
                 </Pressable>
             );
@@ -94,29 +120,29 @@ export default function FilterScreen() {
     }
 
     if (!filterData) {
-         return <ThemedView style={styles.center}><ThemedText>No filter data available.</ThemedText></ThemedView>;
+        return <ThemedView style={styles.center}><ThemedText>No filter data available.</ThemedText></ThemedView>;
     }
 
     const isCreatingNew = filterId === 'new';
 
     return (
         <ThemedView style={styles.container}>
-             <Stack.Screen options={{ title: isCreatingNew ? 'Create Filter' : filterData.prompt.substring(0, 20) + '...' }} />
+            <Stack.Screen options={{ title: isCreatingNew ? 'Create Filter' : filterData.prompt.substring(0, 20) + '...' }} />
             {/* Top Bar */}
             <Pressable onPress={handleEditPress} style={styles.topBar}>
                 <View style={styles.promptContainer}>
-                     <ThemedText style={styles.promptText} numberOfLines={2}>{filterData.prompt}</ThemedText>
-                     {/* Simple Edit Icon */}
-                     <IconSymbol name="pencil" size={18} color={Colors[colorScheme ?? 'light'].tint} />
+                    <ThemedText style={styles.promptText} numberOfLines={2}>{filterData.prompt}</ThemedText>
+                    {/* Simple Edit Icon */}
+                    <IconSymbol name="pencil" size={18} color={Colors[colorScheme ?? 'light'].tint} />
                 </View>
-                 {/* Display small associated images - Placeholder */}
-                 <View style={styles.imagePreviewContainer}>
+                {/* Display small associated images - Placeholder */}
+                <View style={styles.imagePreviewContainer}>
                     {(filterData.imageUrls || []).slice(0, 3).map((url, index) => (
                         <Image key={index} source={{ uri: url }} style={styles.previewImage} />
                     ))}
-                     {/* Show placeholder if no images */}
-                    {(filterData.imageUrls || []).length === 0 && <View style={styles.previewImagePlaceholder}><ThemedText style={{fontSize: 10}}>No previews</ThemedText></View>}
-                 </View>
+                    {/* Show placeholder if no images */}
+                    {(filterData.imageUrls || []).length === 0 && <View style={styles.previewImagePlaceholder}><ThemedText style={{ fontSize: 10 }}>No previews</ThemedText></View>}
+                </View>
             </Pressable>
 
             {/* Photo Upload/Display Area */}
@@ -162,8 +188,8 @@ const styles = StyleSheet.create({
         marginRight: 8, // Add space between text and icon
     },
     imagePreviewContainer: {
-         flexDirection: 'row',
-         gap: 8, // Space between preview images
+        flexDirection: 'row',
+        gap: 8, // Space between preview images
     },
     previewImage: {
         width: 40,
@@ -171,7 +197,7 @@ const styles = StyleSheet.create({
         borderRadius: 4,
         backgroundColor: '#eee', // Placeholder bg
     },
-     previewImagePlaceholder: {
+    previewImagePlaceholder: {
         width: 40,
         height: 40,
         borderRadius: 4,
