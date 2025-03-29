@@ -13,6 +13,9 @@ const MAPPING = {
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'person.fill': 'person',
+  'plus.circle.fill': 'add-circle',
+  'wand.and.stars': 'auto-fix-high', // Added mapping
 } as Partial<
   Record<
     import('expo-symbols').SymbolViewProps['name'],
@@ -32,12 +35,18 @@ export function IconSymbol({
   size = 24,
   color,
   style,
+  weight, 
 }: {
   name: IconSymbolName;
   size?: number;
   color: string | OpaqueColorValue;
   style?: StyleProp<ViewStyle>;
-  weight?: SymbolWeight;
+  weight?: SymbolWeight; 
 }) {
-  return <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />;
+  const iconName = MAPPING[name];
+  if (!iconName) {
+    console.warn(`IconSymbol: No mapping found for SFSymbol name "${name}". Rendering default icon.`);
+    return <MaterialIcons color={color} size={size} name="help-outline" style={style} />; // Return a default icon
+  }
+  return <MaterialIcons color={color} size={size} name={iconName} style={style} />;
 }
