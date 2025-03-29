@@ -40,13 +40,15 @@ export default function HomeScreen() {
 
   const navigateToFilter = (filter: FilterItem) => {
     if (filter.isCreate) {
-      // TODO: Navigate to the actual filter creation screen (chat interface)
-      Alert.alert("Create Filter", "Navigate to filter creation screen (chat).");
+      // Navigate to the filter screen with a special ID for creation
+      router.push('/filter/new');
+      // Alert.alert("Create Filter", "Navigate to filter creation screen (chat).");
       // Example navigation (replace with actual route when ready):
       // router.push('/filter-create-chat');
     } else {
-      // TODO: Navigate to the filter application screen
-      Alert.alert("Apply Filter", `Navigate to apply screen for ${filter.name}.`);
+      // Navigate to the filter screen with the specific filter ID
+      router.push(`/filter/${filter.id}`);
+      // Alert.alert("Apply Filter", `Navigate to apply screen for ${filter.name}.`);
       // Example navigation (replace with actual route when ready):
       // router.push({
       //   pathname: '/filter-apply', 
